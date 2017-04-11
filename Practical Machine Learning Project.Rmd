@@ -1,0 +1,193 @@
+---
+title: "Practical Machine Learning Project"
+author: "Yiyang Hu"
+date: "4/8/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, we will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data Sources
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+## Goals
+
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. We may use any of the other variables to predict with. We will create a report describing how we built the model, how we used cross validation, what we think the expected out of sample error is, and why we made the choices. We will also use your prediction model to predict 20 different test cases.
+
+## Data Processing
+
+### Load Data
+We load the R packages and wonload training & testing data sets from the above URLs.
+```{r cache=TRUE, message=FALSE}
+library(caret);
+library(rpart);
+library(rpart.plot);
+library(rattle);
+library(randomForest);
+library(RColorBrewer);
+
+set.seed(12345);
+trainingURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv";
+testingURL  <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv";
+
+training <- read.csv(url(trainingURL),na.strings= c("NA","#DIV/0!",""))
+testing <- read.csv(url(testingURL),na.strings= c("NA","#DIV/0!",""))
+
+```
+
+### Partition Data
+We now will partition training data set into two different sets, 60% as training data and the remaining 40% as testing data.
+```{r cache=TRUE, message=FALSE}
+
+inTrain <- createDataPartition(training$classe, p= 0.6, list= FALSE)
+trainingData <- training[inTrain,]
+testingData <-training[-inTrain,]
+dim(trainingData)
+dim(testingData)
+
+```
+
+### Clean Data
+We then remove the NearZeroVariance variables 
+```{r cache=TRUE, message=FALSE}
+
+nzv <- nearZeroVar(trainingData, saveMetrics = TRUE)
+trainingData <- trainingData[,nzv$nzv == FALSE]
+
+nzv <- nearZeroVar(testingData, saveMetrics =  TRUE)
+testingData <- testingData[,nzv$nzv == FALSE]
+
+```
+
+Next we remove the 1st column of data set (ID) so that the ID variable won't interfere with Machine Learning Algorithms. 
+
+```{r cache=TRUE, message=FALSE}
+
+trainingData <- trainingData[c(-1)]
+```
+
+After that, we can clean up and remove the variable that has more than 60% of NA's.
+```{r cache=TRUE, message=FALSE}
+trainingDataTemp <- trainingData
+
+for (i in 1:length(trainingData)) {
+        if (sum (is.na(trainingData[,i]))/nrow(trainingData) >=0.6) {
+                for (j in 1: length(trainingDataTemp)) {
+                        if (length(grep(names(trainingData[i]),names(trainingDataTemp)[j])) ==1){
+                                trainingDataTemp <- trainingDataTemp[, -j]
+                        }
+                }
+        }
+}
+
+trainingData <- trainingDataTemp
+rm(trainingDataTemp)
+dim(trainingData)
+```
+
+We will apply the same procedures for testing data: first themove the classe column, then make sure the variables in training data testing data are consistent
+```{r cache=TRUE, message=FALSE}
+
+column <- colnames(trainingData)
+column2 <- colnames(trainingData[,-58])
+testingData <- testingData[column]
+testing <- testing[column2]
+
+dim(testingData)
+dim(testing)
+
+testingDataTemp <- testingData
+
+for (i in 1:length(testingData)) {
+        if (sum (is.na(testingData[,i]))/nrow(testingData) >=0.6) {
+                for (j in 1: length(testingDataTemp)) {
+                        if (length(grep(names(testingData[i]),names(testingDataTemp)[j])) ==1){
+                                testingDataTemp <- testingDataTemp[, -j]
+                        }
+                }
+        }
+}
+
+testingData <- testingDataTemp
+rm(testingDataTemp)
+
+# Removing row 2 as it doesn't have much use
+testing <- rbind(trainingData[2,-58],testing)
+testing <- testing[-1,]
+
+
+
+```
+
+## Prediction Algorithms
+
+### Decision tree
+Here we are choosing k = 5 for k-fold cross validation. 
+
+
+```{r cache=TRUE, message=FALSE}
+set.seed(12345)
+control <- trainControl(method="cv", number = 5)
+fit_rpart <- train(classe ~., data= trainingData, method="rpart", trControl = control)
+print(fit_rpart, digits= 4)
+fancyRpartPlot(fit_rpart$finalModel)
+
+
+# Using validation set to predict outcomes
+predict_rpart <- predict(fit_rpart, testingData)
+# Prediction result
+(conf_rpart <- confusionMatrix(testingData$classe,predict_rpart))
+
+# Accuracy rate of this prediction
+(accuracy_rpart <- conf_rpart$overall[1])
+
+
+```
+
+With only about 46% accuracy rate, classifiction tree doesn't do a good job predicting the outcome so we should move on to the next method.
+
+### Random forest
+
+```{r cache=TRUE, message=FALSE}
+set.seed(12345)
+mod_rf <- randomForest(classe ~., data= trainingData)
+
+# In-sample error
+pred_rf <- predict(mod_rf, testingData, type= "class")
+
+# Confusion Matrix checking for test results
+cm_rf <- confusionMatrix(pred_rf, testingData$classe)
+cm_rf
+ plot(mod_rf)
+
+
+```
+
+We could see that random forest gives us a 99% accuracy rate, which is noticeably better than the earlier decision tree method.
+
+## Predict the testing set
+```{r cache=TRUE, message=FALSE}
+
+predict_test <- predict(mod_rf,testing, type="class")
+predict_test
+
+
+```
+
+
+So now with the random forest method, we are able to predict the testing set "classe" variable as above.
